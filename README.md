@@ -1,6 +1,6 @@
 # TennisProject
-Tennis analysis using deep learning and machine learning.
-You can check blog post https://medium.com/@kosolapov.aetp/tennis-analysis-using-deep-learning-and-machine-learning-a5a74db7e2ee to check details
+Tennis analysis using deep learning and machine learning. <br>
+You can check this blog post https://medium.com/@kosolapov.aetp/tennis-analysis-using-deep-learning-and-machine-learning-a5a74db7e2ee for more details
 
 ![](pics/hard.gif)
 ![](pics/grass.gif)
