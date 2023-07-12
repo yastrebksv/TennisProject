@@ -12,7 +12,7 @@ CatBoostRegressor was used to predict ball's bounces during the game based on ba
 It was used neural network for detection 14 points of tennis court. For more information you can check this repository: https://github.com/yastrebksv/TennisCourtDetector. There you can find pretrained weights to check the model.
 
 ### How to run
-Prepare a video file with resolution 640x1280
+Prepare a video file with resolution 1280x720
 1. Clone the repository `https://github.com/yastrebksv/TennisProject.git`
 2. Run `pip install -r requirements.txt` to install packages required
 3. Run `python main.py <args>`
