@@ -27,8 +27,7 @@ def get_court_img():
     court_img = (np.stack((court, court, court), axis=2)*255).astype(np.uint8)
     return court_img
 
-def main(frames, scenes, homography_matrices, kps_court, persons_top, persons_bottom,
-         draw_trace=False, trace=7):
+def main(frames, scenes, homography_matrices, kps_court, persons_top, persons_bottom):
     """
     :params
         frames: list of original images
@@ -37,8 +36,6 @@ def main(frames, scenes, homography_matrices, kps_court, persons_top, persons_bo
         kps_court: list of 14 key points of tennis court
         persons_top: list of person bboxes located in the top of tennis court
         persons_bottom: list of person bboxes located in the bottom of tennis court
-        draw_trace: whether to draw ball trace
-        trace: the length of ball trace
     :return
         imgs_res: list of resulting images
     """
@@ -121,8 +118,7 @@ if __name__ == '__main__':
     person_detector = PersonDetector(device)
     persons_top, persons_bottom = person_detector.track_players(frames, homography_matrices, filter_players=False)
 
-    imgs_res = main(frames, scenes, homography_matrices, kps_court, persons_top, persons_bottom,
-                    draw_trace=True)
+    imgs_res = main(frames, scenes, homography_matrices, kps_court, persons_top, persons_bottom)
 
     write(imgs_res, fps, args.path_output_video)
 
