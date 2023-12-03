@@ -3,7 +3,6 @@ from court_detection_net import CourtDetectorNet
 import numpy as np
 from court_reference import CourtReference
 from person_detector import PersonDetector
-from ball_detector import BallDetector
 from utils import scene_detect
 import argparse
 import torch
@@ -28,13 +27,12 @@ def get_court_img():
     court_img = (np.stack((court, court, court), axis=2)*255).astype(np.uint8)
     return court_img
 
-def main(frames, scenes, ball_track, homography_matrices, kps_court, persons_top, persons_bottom,
+def main(frames, scenes, homography_matrices, kps_court, persons_top, persons_bottom,
          draw_trace=False, trace=7):
     """
     :params
         frames: list of original images
         scenes: list of beginning and ending of video fragment
-        ball_track: list of (x,y) ball coordinates
         homography_matrices: list of homography matrices
         kps_court: list of 14 key points of tennis court
         persons_top: list of person bboxes located in the top of tennis court
@@ -60,26 +58,6 @@ def main(frames, scenes, ball_track, homography_matrices, kps_court, persons_top
             for i in range(scenes[num_scene][0], scenes[num_scene][1]):
                 img_res = frames[i]
                 inv_mat = homography_matrices[i]
-
-                # draw ball trajectory
-                if ball_track[i][0]:
-                    if draw_trace:
-                        for j in range(0, trace):
-                            if i-j >= 0:
-                                if ball_track[i-j][0]:
-                                    draw_x = int(ball_track[i-j][0])
-                                    draw_y = int(ball_track[i-j][1])
-                                    img_res = cv2.circle(frames[i], (draw_x, draw_y),
-                                    radius=3, color=(0, 255, 0), thickness=2)
-                    else:    
-                        img_res = cv2.circle(img_res , (int(ball_track[i][0]), int(ball_track[i][1])), radius=5,
-                                             color=(0, 255, 0), thickness=2)
-                        img_res = cv2.putText(img_res, 'ball', 
-                              org=(int(ball_track[i][0]) + 8, int(ball_track[i][1]) + 8),
-                              fontFace=cv2.FONT_HERSHEY_SIMPLEX,
-                              fontScale=0.8,
-                              thickness=2,
-                              color=(0, 255, 0))
 
                 # draw court keypoints
                 if kps_court[i] is not None:
@@ -126,7 +104,6 @@ def write(imgs_res, fps, path_output_video):
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--path_ball_track_model', type=str, help='path to pretrained model for ball detection')
     parser.add_argument('--path_court_model', type=str, help='path to pretrained model for court detection')
     parser.add_argument('--path_input_video', type=str, help='path to input video')
     parser.add_argument('--path_output_video', type=str, help='path to output video')
@@ -134,11 +111,7 @@ if __name__ == '__main__':
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     frames, fps = read_video(args.path_input_video) 
-    scenes = scene_detect(args.path_input_video)    
-
-    print('ball detection')
-    ball_detector = BallDetector(args.path_ball_track_model, device)
-    ball_track = ball_detector.infer_model(frames)
+    scenes = scene_detect(args.path_input_video)
 
     print('court detection')
     court_detector = CourtDetectorNet(args.path_court_model, device)
@@ -148,7 +121,7 @@ if __name__ == '__main__':
     person_detector = PersonDetector(device)
     persons_top, persons_bottom = person_detector.track_players(frames, homography_matrices, filter_players=False)
 
-    imgs_res = main(frames, scenes, ball_track, homography_matrices, kps_court, persons_top, persons_bottom,
+    imgs_res = main(frames, scenes, homography_matrices, kps_court, persons_top, persons_bottom,
                     draw_trace=True)
 
     write(imgs_res, fps, args.path_output_video)
