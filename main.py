@@ -2,7 +2,6 @@ import cv2
 from court_detection_net import CourtDetectorNet
 import numpy as np
 from court_reference import CourtReference
-from bounce_detector import BounceDetector
 from person_detector import PersonDetector
 from ball_detector import BallDetector
 from utils import scene_detect
@@ -29,13 +28,12 @@ def get_court_img():
     court_img = (np.stack((court, court, court), axis=2)*255).astype(np.uint8)
     return court_img
 
-def main(frames, scenes, bounces, ball_track, homography_matrices, kps_court, persons_top, persons_bottom,
+def main(frames, scenes, ball_track, homography_matrices, kps_court, persons_top, persons_bottom,
          draw_trace=False, trace=7):
     """
     :params
         frames: list of original images
         scenes: list of beginning and ending of video fragment
-        bounces: list of image numbers where ball touches the ground
         ball_track: list of (x,y) ball coordinates
         homography_matrices: list of homography matrices
         kps_court: list of 14 key points of tennis court
@@ -91,14 +89,6 @@ def main(frames, scenes, bounces, ball_track, homography_matrices, kps_court, pe
 
                 height, width, _ = img_res.shape
 
-                # draw bounce in minimap
-                if i in bounces and inv_mat is not None:
-                    ball_point = ball_track[i]
-                    ball_point = np.array(ball_point, dtype=np.float32).reshape(1, 1, 2)
-                    ball_point = cv2.perspectiveTransform(ball_point, inv_mat)
-                    court_img = cv2.circle(court_img, (int(ball_point[0, 0, 0]), int(ball_point[0, 0, 1])),
-                                                       radius=0, color=(0, 255, 255), thickness=50)
-
                 minimap = court_img.copy()
 
                 # draw persons
@@ -138,7 +128,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--path_ball_track_model', type=str, help='path to pretrained model for ball detection')
     parser.add_argument('--path_court_model', type=str, help='path to pretrained model for court detection')
-    parser.add_argument('--path_bounce_model', type=str, help='path to pretrained model for bounce detection')
     parser.add_argument('--path_input_video', type=str, help='path to input video')
     parser.add_argument('--path_output_video', type=str, help='path to output video')
     args = parser.parse_args()
@@ -159,13 +148,7 @@ if __name__ == '__main__':
     person_detector = PersonDetector(device)
     persons_top, persons_bottom = person_detector.track_players(frames, homography_matrices, filter_players=False)
 
-    # bounce detection
-    bounce_detector = BounceDetector(args.path_bounce_model)
-    x_ball = [x[0] for x in ball_track]
-    y_ball = [x[1] for x in ball_track]
-    bounces = bounce_detector.predict(x_ball, y_ball)
-
-    imgs_res = main(frames, scenes, bounces, ball_track, homography_matrices, kps_court, persons_top, persons_bottom,
+    imgs_res = main(frames, scenes, ball_track, homography_matrices, kps_court, persons_top, persons_bottom,
                     draw_trace=True)
 
     write(imgs_res, fps, args.path_output_video)
