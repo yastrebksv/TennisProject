@@ -8,6 +8,66 @@ from ball_detector import BallDetector
 from utils import scene_detect
 import argparse
 import torch
+from scipy.signal import find_peaks
+from scipy.signal import argrelextrema
+
+import csv
+import os
+
+def write_csv(path_csv, frames, ball_track, bounces, hits, persons_top, persons_bottom, homography_matrices, kps_court):
+    with open(path_csv, mode='w', newline='') as file:
+        writer = csv.writer(file)
+
+        header = ['frame_id',
+                  'ball_x', 'ball_y', 'bounce', 'hit',
+                  'top_player_x', 'top_player_y',
+                  'bottom_player_x', 'bottom_player_y',
+                  'top_player_bbox_x1', 'top_player_bbox_y1', 'top_player_bbox_x2', 'top_player_bbox_y2',
+                  'bottom_player_bbox_x1', 'bottom_player_bbox_y1', 'bottom_player_bbox_x2', 'bottom_player_bbox_y2',
+                  'homography_valid'] + \
+                 [f'court_kp_{i}_x' for i in range(14)] + [f'court_kp_{i}_y' for i in range(14)]
+
+        writer.writerow(header)
+
+        for i in range(len(frames)):
+            ball_x, ball_y = ball_track[i] if ball_track[i] else (None, None)
+            bounce = i in bounces
+            hit = i in hits
+
+            # person positions and bbox
+            def extract_person_info(person_list):
+                if person_list and len(person_list[0]) > 0:
+                    bbox = person_list[0][0]
+                    pos = person_list[0][1]
+                    return pos[0], pos[1], bbox[0], bbox[1], bbox[2], bbox[3]
+                return None, None, None, None, None, None
+
+            top_x, top_y, top_x1, top_y1, top_x2, top_y2 = extract_person_info(persons_top[i])
+            bot_x, bot_y, bot_x1, bot_y1, bot_x2, bot_y2 = extract_person_info(persons_bottom[i])
+
+            homography_valid = homography_matrices[i] is not None
+
+            kps = kps_court[i]
+            if kps is not None:
+                kps_x = [kp[0, 0] for kp in kps]
+                kps_y = [kp[0, 1] for kp in kps]
+            else:
+                kps_x = [None] * 14
+                kps_y = [None] * 14
+
+            row = [
+                i,
+                ball_x, ball_y, bounce, hit,
+                top_x, top_y,
+                bot_x, bot_y,
+                top_x1, top_y1, top_x2, top_y2,
+                bot_x1, bot_y1, bot_x2, bot_y2,
+                homography_valid
+            ] + kps_x + kps_y
+
+            writer.writerow(row)
+
+
 
 def read_video(path_video):
     cap = cv2.VideoCapture(path_video)
@@ -29,7 +89,7 @@ def get_court_img():
     court_img = (np.stack((court, court, court), axis=2)*255).astype(np.uint8)
     return court_img
 
-def main(frames, scenes, bounces, ball_track, homography_matrices, kps_court, persons_top, persons_bottom,
+def main(frames, scenes, bounces, hits, ball_track, homography_matrices, kps_court, persons_top, persons_bottom,
          draw_trace=False, trace=7):
     """
     :params
@@ -49,7 +109,19 @@ def main(frames, scenes, bounces, ball_track, homography_matrices, kps_court, pe
     imgs_res = []
     width_minimap = 166
     height_minimap = 350
-    is_track = [x is not None for x in homography_matrices] 
+
+    # h_court, w_court = get_court_img().shape[:2]
+    # frame_h, frame_w, _ = frames[0].shape
+    #
+    # # scale minimap to ~20% of frame width
+    # width_minimap = int(frame_w * 0.2)
+    # height_minimap = int(h_court * (width_minimap / w_court))
+    #
+    is_track = [x is not None for x in homography_matrices]
+
+    ball_positions = []
+
+
     for num_scene in range(len(scenes)):
         sum_track = sum(is_track[scenes[num_scene][0]:scenes[num_scene][1]])
         len_track = scenes[num_scene][1] - scenes[num_scene][0]
@@ -58,8 +130,12 @@ def main(frames, scenes, bounces, ball_track, homography_matrices, kps_court, pe
         scene_rate = sum_track/(len_track+eps)
         if (scene_rate > 0.5):
             court_img = get_court_img()
+            print("Court: ", court_img)
 
             for i in range(scenes[num_scene][0], scenes[num_scene][1]):
+
+
+
                 img_res = frames[i]
                 inv_mat = homography_matrices[i]
 
@@ -91,13 +167,48 @@ def main(frames, scenes, bounces, ball_track, homography_matrices, kps_court, pe
 
                 height, width, _ = img_res.shape
 
+
+                # ball_point = ball_track[i]
+                # ball_point = np.array(ball_point, dtype=np.float32).reshape(1, 1, 2)
+                # ball_point = cv2.perspectiveTransform(ball_point, inv_mat)
+                # if ball_point[0, 0, 1] < 0:
+                #     ball_point[0, 0, 1] = 0
+                # court_img = cv2.circle(court_img, (int(ball_point[0, 0, 0]), int(ball_point[0, 0, 1])),
+                #                        radius=0, color=(0, 255, 255), thickness=40)
+
+                #
+                # ball_point = ball_track[i]
+                # ball_point = np.array(ball_point, dtype=np.float32).reshape(1, 1, 2)
+                # ball_point = cv2.perspectiveTransform(ball_point, inv_mat)
+                # court_img = cv2.circle(court_img, (int(new_ball_positions[i][0]), int(new_ball_positions[i][1])),
+                #                        radius=0, color=(0, 255, 255), thickness=20)
+
                 # draw bounce in minimap
                 if i in bounces and inv_mat is not None:
+                    print(f"❌ Bounce detected at frame {i}")
                     ball_point = ball_track[i]
                     ball_point = np.array(ball_point, dtype=np.float32).reshape(1, 1, 2)
                     ball_point = cv2.perspectiveTransform(ball_point, inv_mat)
+                    if ball_point[0, 0, 1] < 0:
+                        ball_point[0, 0, 1] = 0
                     court_img = cv2.circle(court_img, (int(ball_point[0, 0, 0]), int(ball_point[0, 0, 1])),
-                                                       radius=0, color=(0, 255, 255), thickness=50)
+                                           radius=0, color=(0, 255, 255), thickness=50)
+                    print(f"❌ Bounce detected at frame {i}", ball_point)
+
+
+
+
+                # draw hits in minimap
+                if i in hits and inv_mat is not None:
+                    print(f"❌ Bounce detected at frame {i}")
+                    ball_point = ball_track[i]
+                    ball_point = np.array(ball_point, dtype=np.float32).reshape(1, 1, 2)
+                    ball_point = cv2.perspectiveTransform(ball_point, inv_mat)
+                    if ball_point[0, 0, 1] < 0 :
+                        ball_point[0, 0, 1] = 0
+                    court_img = cv2.circle(court_img, (int(ball_point[0, 0, 0]), int(ball_point[0, 0, 1])),
+                                                       radius=0, color=(0, 128, 255), thickness=50)
+                    print(f"❌ hits detected at frame {i}", ball_point)
 
                 minimap = court_img.copy()
 
@@ -136,14 +247,15 @@ def write(imgs_res, fps, path_output_video):
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--path_ball_track_model', type=str, help='path to pretrained model for ball detection')
-    parser.add_argument('--path_court_model', type=str, help='path to pretrained model for court detection')
-    parser.add_argument('--path_bounce_model', type=str, help='path to pretrained model for bounce detection')
-    parser.add_argument('--path_input_video', type=str, help='path to input video')
-    parser.add_argument('--path_output_video', type=str, help='path to output video')
+    parser.add_argument('--path_ball_track_model', default=r"H:\TemprorayCodes\Dr. Klaus\Ball Tracking\TennisProject\models\model_best.pt", type=str, help='path to pretrained model for ball detection')
+    parser.add_argument('--path_court_model', default=r"H:\TemprorayCodes\Dr. Klaus\Ball Tracking\TennisProject\models\model_tennis_court_det.pt", type=str, help='path to pretrained model for court detection')
+    parser.add_argument('--path_bounce_model', default=r"H:\TemprorayCodes\Dr. Klaus\Ball Tracking\TennisProject\models\ctb_regr_bounce.cbm", type=str, help='path to pretrained model for bounce detection')
+    parser.add_argument('--path_input_video', default=r"H:\TemprorayCodes\Dr. Klaus\Ball Tracking\TennisProject\input\test6.mp4", type=str, help='path to input video')
+    parser.add_argument('--path_output_video', default=r"H:\TemprorayCodes\Dr. Klaus\Ball Tracking\TennisProject\output\test6.mp4", type=str, help='path to output video')
     args = parser.parse_args()
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(device)
     frames, fps = read_video(args.path_input_video) 
     scenes = scene_detect(args.path_input_video)    
 
@@ -159,18 +271,165 @@ if __name__ == '__main__':
     person_detector = PersonDetector(device)
     persons_top, persons_bottom = person_detector.track_players(frames, homography_matrices, filter_players=False)
 
-    # bounce detection
+    # # bounce detection
     bounce_detector = BounceDetector(args.path_bounce_model)
     x_ball = [x[0] for x in ball_track]
     y_ball = [x[1] for x in ball_track]
-    bounces = bounce_detector.predict(x_ball, y_ball)
 
-    imgs_res = main(frames, scenes, bounces, ball_track, homography_matrices, kps_court, persons_top, persons_bottom,
+    import pandas as pd
+
+    # Convert lists to pandas Series
+    x_ball_series = pd.Series(x_ball, dtype="float")
+    y_ball_series = pd.Series(y_ball, dtype="float")
+
+    # Interpolate missing values
+    ball_x_interp = x_ball_series.interpolate(method='pchip').fillna(method='bfill')
+    ball_y_interp = y_ball_series.interpolate(method='pchip').fillna(method='bfill')
+
+
+
+
+    ball_track = list(zip(ball_x_interp, ball_y_interp))
+    bounces, preds = bounce_detector.predict(ball_x_interp, ball_y_interp)
+    mori_bounce = bounces
+
+
+    # ---------------------------------------------------------------------------------------
+
+
+    # Derivatives
+    dx = ball_x_interp.diff()
+    dy = ball_y_interp.diff()
+
+    # Speed
+    speed = np.sqrt(dx ** 2 + dy ** 2)
+
+    # Detect bounces as local minima in speed
+    bounce_candidates = argrelextrema(speed.to_numpy(), np.less, order=3)[0]  # order=3 = sensitivity
+
+    # Detect hits using angle change in velocity vectors
+    vx = dx
+    vy = dy
+    vx1, vy1 = vx.shift(1), vy.shift(1)
+
+    dot_product = vx * vx1 + vy * vy1
+    norm1 = np.sqrt(vx ** 2 + vy ** 2)
+    norm2 = np.sqrt(vx1 ** 2 + vy1 ** 2)
+
+    # Avoid divide by zero
+    cos_angle = dot_product / (norm1 * norm2)
+    cos_angle = np.clip(cos_angle, -1, 1)
+
+    angle_change = np.arccos(cos_angle)  # radians
+    hit_candidates = angle_change[angle_change > 1.0].index  # >1 rad (~57 degrees)
+
+    # ---------------------------------------------------------------------------------------
+
+    # Extract values (first column as Series)
+    # y = pd.Series(df.iloc[:, 0].astype(float)).reset_index(drop=True)
+    # x = y.index.to_numpy()
+    # dy = y.diff()  # derivative for classification
+
+    # --- parameters you can tune ---
+    Q_LOW, Q_HIGH = 0.20, 0.80  # use only bottom/top 15% of y as hit zones
+    MIN_GAP = 8  # frames between events
+    BOUNCE_PROM = 30.0  # prominence threshold for bounces
+    HIT_PROM = 60.0  # prominence threshold for hits
+
+    # --- detect bounces as strong local minima in y ---
+    bounces, _ = find_peaks(-ball_y_interp.values, prominence=BOUNCE_PROM, distance=MIN_GAP)
+
+    # --- detect hits as strong maxima/minima with prominence ---
+    hits_max, _ = find_peaks(ball_y_interp.values, prominence=HIT_PROM, distance=MIN_GAP)
+    hits_min, _ = find_peaks((-ball_y_interp).values, prominence=HIT_PROM, distance=MIN_GAP)
+    hits = np.union1d(hits_max, hits_min)
+
+    # --- filter hits to only top/bottom court zones ---
+    y_low = ball_y_interp.quantile(Q_LOW)
+    y_high = ball_y_interp.quantile(Q_HIGH)
+    hits = [i for i in hits if (ball_y_interp.iloc[i] <= y_low or ball_y_interp.iloc[i] >= y_high)]
+
+    # --- refine classification for bottom-side events ---
+    hits_bottom = []
+    real_bounces = []
+
+    for idx in bounces:
+        if idx + 1 < len(dy):  # avoid last index
+            if dy.iloc[idx + 1] > 0:
+                real_bounces.append(idx)  # ball goes up again → bounce
+            else:
+                hits_bottom.append(idx)  # ball keeps going down → hit at bottom
+
+    # update sets
+    hits = np.union1d(hits, hits_bottom)
+    bounces = np.array(real_bounces)
+
+
+
+    # ----------------------------------------------------------------------------------------------
+
+    BOUNCE_GAP = 5  # minimum allowed gap between valid bounces (adjust per FPS)
+
+    filtered_bounces = []
+    for b in sorted(mori_bounce):
+        if not filtered_bounces or (b - filtered_bounces[-1]) > BOUNCE_GAP:
+            filtered_bounces.append(b)
+        else:
+            print("The bounce has removed: ", b)
+    mori_bounce = set(filtered_bounces)
+
+
+
+    HIT_GAP = 5  # minimum allowed gap between valid bounces (adjust per FPS)
+
+    filtered_hits= []
+    for b in sorted(hits):
+        if not filtered_hits or (b - filtered_hits[-1]) > HIT_GAP:
+            filtered_hits.append(b)
+        else:
+            print("The hit has removed: ", b)
+    hits = filtered_hits
+
+    # raw_positions = []
+    # for i in range(len(ball_track)):
+    #     inv_mat = homography_matrices[i]
+    #     ball_point = np.array(ball_track[i], dtype=np.float32).reshape(1, 1, 2)
+    #     ball_point = cv2.perspectiveTransform(ball_point, inv_mat)
+    #     raw_positions.append(tuple(map(float, ball_point[0, 0])))
+    #
+    # # Step 2: Compute Y shift: 3500 - max_y
+    # max_y = max(pos[1] for pos in raw_positions)
+    # y_shift = 3500 - max_y
+    #
+    # # Step 3: Apply shift
+    # new_ball_positions = [(x, y + y_shift) for (x, y) in raw_positions]
+
+
+    imgs_res = main(frames, scenes, mori_bounce, hits, ball_track, homography_matrices, kps_court, persons_top, persons_bottom,
                     draw_trace=True)
 
     write(imgs_res, fps, args.path_output_video)
 
 
 
+    path_csv = args.path_output_video.replace('.mp4', '.csv')
+    write_csv(path_csv, frames, new_ball_positions, mori_bounce, hits, persons_top, persons_bottom, homography_matrices, kps_court)
 
 
+    # thresholds = [0.3, 0.4, 0.5]
+    #
+    # for t in thresholds:
+    #     print(f'Processing threshold {t}')
+    #     bounce_detector.threshold = t
+    #     bounces, preds = bounce_detector.predict(x_ball, y_ball)
+    #
+    #     imgs_res = main(frames, scenes, bounces, ball_track, homography_matrices, kps_court,
+    #                     persons_top, persons_bottom, draw_trace=True)
+    #
+    #     output_path = args.path_output_video.replace('.mp4', f'_t{int(t * 100)}.mp4')
+    #     write(imgs_res, fps, output_path)
+    #
+    #
+    #
+    #
+    #

@@ -56,7 +56,7 @@ class BounceDetector:
         if len(ind_bounce) > 0:
             ind_bounce = self.postprocess(ind_bounce, preds)
         frames_bounce = [num_frames[x] for x in ind_bounce]
-        return set(frames_bounce)
+        return set(frames_bounce), preds
     
     def smooth_predictions(self, x_ball, y_ball):
         is_none = [int(x is None) for x in x_ball]
